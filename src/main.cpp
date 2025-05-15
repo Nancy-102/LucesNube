@@ -1,90 +1,97 @@
-#include <Arduino.h>
-#include <FastLED.h>
-#include <TaskScheduler.h>
+// Inclusión de bibliotecas necesarias 
+#include <Arduino.h>        // Biblioteca principal para funciones básicas de Arduino
+#include <FastLED.h>        // Biblioteca para controlar tiras LED RGB/RGBW
+#include <TaskScheduler.h>  // Biblioteca para programar y ejecutar tareas periódicas
 
 // Configuración de la tira LED
-#define LED_PIN     D4      // Pin donde está conectada la tira LED
-#define NUM_LEDS    60      // Número de LEDs en la tira
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER GRB
-#define BRIGHTNESS  150     // Brillo (0-255)
+#define LED_PIN     D4      // Pin donde está conectada la tira LED (D4 en ESP8266)
+#define NUM_LEDS    60      // Número total de LEDs en la tira
+#define LED_TYPE    WS2812B // Tipo específico de LED (WS2812B = NeoPixel)
+#define COLOR_ORDER GRB     // Orden de bytes de color (Green-Red-Blue)
+#define BRIGHTNESS  150     // Brillo global (0-255, donde 255 es máximo)
 
-// Arreglo de LEDs
-CRGB leds[NUM_LEDS];
+// Arreglo que almacena el estado de cada LED
+CRGB leds[NUM_LEDS];        // CRGB es una estructura que contiene valores RGB
 
-// Definición de tareas
-void rainbowTask();
-void colorWipeTask();
-void meteorTask();
-void breatheTask();
-void twinkleTask();
-void blinkTask();          // Intermitente (I) - parpadeo ámbar
-void reverseTask();        // Reversa (B) - parpadeo blanco
-void directionLeftTask();  // Izquierda (L) - animación direccional izquierda
-void directionRightTask(); // Derecha (R) - animación direccional derecha
-void stopTask();           // Alto (S) - LEDs rojos fijos
-void switchToNextEffect();
-void switchToBlinkEffect();
-void switchToReverseEffect();
-void switchToDirectionLeftEffect();
-void switchToDirectionRightEffect();
-void switchToStopEffect();
+// Declaración de funciones para efectos visuales
+void rainbowTask();         // Efecto arcoíris rotativo
+void colorWipeTask();       // Efecto de barrido de color
+void meteorTask();          // Efecto de "meteorito" desplazándose
+void breatheTask();         // Efecto de respiración (fade in/out)
+void twinkleTask();         // Efecto de destellos aleatorios
+void blinkTask();           // Efecto intermitente ámbar (I)
+void reverseTask();         // Efecto de reversa - blanco (B)
+void directionLeftTask();   // Efecto direccional izquierda (L)
+void directionRightTask();  // Efecto direccional derecha (R)
+void stopTask();            // Efecto de alto - rojo fijo (S)
 
-// Crear scheduler y tareas
-Scheduler scheduler;
-Task tRainbow(5000, TASK_FOREVER, &rainbowTask);
-Task tColorWipe(5000, TASK_FOREVER, &colorWipeTask);
-Task tMeteor(5000, TASK_FOREVER, &meteorTask);
-Task tBreathe(5000, TASK_FOREVER, &breatheTask);
-Task tTwinkle(5000, TASK_FOREVER, &twinkleTask);
-Task tBlink(500, TASK_FOREVER, &blinkTask);           // Intermitente ámbar
-Task tReverse(500, TASK_FOREVER, &reverseTask);       // Reversa blanco
-Task tDirectionLeft(100, TASK_FOREVER, &directionLeftTask);   // Izquierda
-Task tDirectionRight(100, TASK_FOREVER, &directionRightTask); // Derecha
-Task tStop(1000, TASK_FOREVER, &stopTask);            // Alto rojo
+// Funciones para cambiar entre efectos
+void switchToNextEffect();            // Cambiar al siguiente efecto RGB
+void switchToBlinkEffect();           // Activar efecto intermitente
+void switchToReverseEffect();         // Activar efecto reversa
+void switchToDirectionLeftEffect();   // Activar efecto izquierda
+void switchToDirectionRightEffect();  // Activar efecto derecha
+void switchToStopEffect();            // Activar efecto alto
 
-// Variables para las animaciones
-uint8_t gHue = 0;  // Tono rotativo para varios efectos
-uint8_t currentEffect = 0;
-uint8_t currentPalette = 0;
-uint8_t meteorPosition = 0;
-uint8_t wipePosition = 0;
-uint8_t wipeColor = 0;
-bool wipeDirection = true;
-uint8_t breatheBrightness = 0;
-bool breatheIncreasing = true;
+// Crear el planificador de tareas y definir cada tarea
+Scheduler scheduler;        // Objeto principal que maneja todas las tareas
 
-// Variables de estado para modos especiales
-bool inBlinkMode = false;       // I - Intermitente ámbar
-bool inReverseMode = false;     // B - Reversa blanco
-bool inLeftMode = false;        // L - Izquierda
-bool inRightMode = false;       // R - Derecha
-bool inStopMode = false;        // S - Alto rojo
+// Definición de tareas con (intervalo en ms, repeticiones, función callback)
+Task tRainbow(5000, TASK_FOREVER, &rainbowTask);       // Tarea para efecto arcoíris
+Task tColorWipe(5000, TASK_FOREVER, &colorWipeTask);   // Tarea para barrido de color
+Task tMeteor(5000, TASK_FOREVER, &meteorTask);         // Tarea para efecto meteorito
+Task tBreathe(5000, TASK_FOREVER, &breatheTask);       // Tarea para efecto respiración
+Task tTwinkle(5000, TASK_FOREVER, &twinkleTask);       // Tarea para efecto destello
+Task tBlink(500, TASK_FOREVER, &blinkTask);            // Tarea para intermitente (2Hz)
+Task tReverse(500, TASK_FOREVER, &reverseTask);        // Tarea para reversa (2Hz)
+Task tDirectionLeft(100, TASK_FOREVER, &directionLeftTask);    // Tarea para dirección izquierda (10Hz)
+Task tDirectionRight(100, TASK_FOREVER, &directionRightTask);  // Tarea para dirección derecha (10Hz)
+Task tStop(1000, TASK_FOREVER, &stopTask);             // Tarea para efecto alto (1Hz)
 
-// Posiciones para animaciones direccionales
-int leftPosition = NUM_LEDS - 1;
-int rightPosition = 0;
+// Variables para controlar las animaciones
+uint8_t gHue = 0;            // Tono base para efectos de color (0-255)
+uint8_t currentEffect = 0;   // Índice del efecto RGB actual (0-4)
+uint8_t currentPalette = 0;  // Índice de paleta de colores (no usado activamente)
+uint8_t meteorPosition = 0;  // Posición actual del meteorito
+uint8_t wipePosition = 0;    // Posición actual para el efecto barrido
+uint8_t wipeColor = 0;       // Color actual para el efecto barrido
+bool wipeDirection = true;   // Dirección del barrido (true=avanzando, false=retrocediendo)
+uint8_t breatheBrightness = 0; // Brillo actual para efecto respiración
+bool breatheIncreasing = true; // Estado de brillo (incrementando/decrementando)
 
-// Estado del último comando recibido
-char lastCommand = ' ';
+// Variables de estado para modos especiales de señalización
+bool inBlinkMode = false;    // Modo intermitente ámbar (I) activo
+bool inReverseMode = false;  // Modo reversa blanco (B) activo
+bool inLeftMode = false;     // Modo direccional izquierda (L) activo
+bool inRightMode = false;    // Modo direccional derecha (R) activo
+bool inStopMode = false;     // Modo alto rojo (S) activo
 
+// Variables para control de posición en efectos direccionales
+int leftPosition = NUM_LEDS - 1;  // Posición inicial para animación hacia izquierda
+int rightPosition = 0;            // Posición inicial para animación hacia derecha
+
+// Control de comandos
+char lastCommand = ' ';      // Almacena el último comando para toggle (encender/apagar)
+
+// Función de inicialización
 void setup() {
-  Serial.begin(115200);
-  delay(1000); // Retardo de seguridad
+  Serial.begin(115200);      // Iniciar comunicación serial a 115200 baudios
+  delay(1000);               // Esperar 1 segundo por estabilidad
   
-  // Inicializar FastLED
+  // Configurar FastLED con los parámetros definidos
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  FastLED.setBrightness(BRIGHTNESS);
-  FastLED.clear();
-  FastLED.show();
+  FastLED.setBrightness(BRIGHTNESS);  // Establecer brillo global
+  FastLED.clear();                     // Limpiar/apagar todos los LEDs
+  FastLED.show();                      // Actualizar físicamente los LEDs
   
-  // Inicializar scheduler y agregar tareas
+  // Inicializar el planificador
   scheduler.init();
   
-  // Iniciar solo la primera animación
+  // Agregar y activar sólo la primera animación (arcoíris)
   scheduler.addTask(tRainbow);
   tRainbow.enable();
   
+  // Mostrar instrucciones en el monitor serial
   Serial.println("Sistema inicializado - Comandos disponibles:");
   Serial.println("- 'B': Reversa (Parpadean los primeros y últimos 15 LEDs en blanco)");
   Serial.println("- 'I': Intermitentes (Parpadean los primeros y últimos 15 LEDs en ámbar)");
@@ -94,47 +101,48 @@ void setup() {
   Serial.println("Enviar el mismo comando para desactivar y volver a modo RGB");
 }
 
+// Función principal de ejecución continua
 void loop() {
-  // Revisar si hay comandos en el puerto serial
+  // Verificar si hay datos disponibles en el puerto serial
   if (Serial.available() > 0) {
-    char command = Serial.read();
+    char command = Serial.read();  // Leer un byte del puerto serial
     
-    // Si recibe el mismo comando que el último, volver al modo normal
+    // Si el comando es igual al último recibido, desactivar modo y volver a RGB
     if (command == lastCommand) {
-      // Resetear todos los modos
+      // Resetear todos los modos especiales
       inBlinkMode = false;
       inReverseMode = false;
       inLeftMode = false;
       inRightMode = false;
       inStopMode = false;
-      lastCommand = ' ';
+      lastCommand = ' ';  // Limpiar el último comando
       
-      // Volver a animaciones RGB
+      // Volver a modo de animaciones RGB normales
       switchToNextEffect();
     } else {
-      // Procesar nuevo comando
+      // Procesamiento de nuevo comando
       switch (command) {
-        case 'B': case 'b':
+        case 'B': case 'b':  // Reversa (blanco)
           switchToReverseEffect();
           lastCommand = 'B';
           break;
           
-        case 'I': case 'i':
+        case 'I': case 'i':  // Intermitente (ámbar)
           switchToBlinkEffect();
           lastCommand = 'I';
           break;
           
-        case 'L': case 'l':
+        case 'L': case 'l':  // Dirección izquierda
           switchToDirectionLeftEffect();
           lastCommand = 'L';
           break;
           
-        case 'R': case 'r':
+        case 'R': case 'r':  // Dirección derecha
           switchToDirectionRightEffect();
           lastCommand = 'R';
           break;
           
-        case 'S': case 's':
+        case 'S': case 's':  // Alto (rojo)
           switchToStopEffect();
           lastCommand = 'S';
           break;
@@ -142,13 +150,14 @@ void loop() {
     }
   }
   
-  scheduler.execute();
-  FastLED.show();
-  FastLED.delay(1000 / 120); // 120 FPS
+  scheduler.execute();         // Ejecutar tareas programadas
+  FastLED.show();              // Actualizar físicamente los LEDs
+  FastLED.delay(1000 / 120);   // Limitar a 120 FPS (8.33ms entre frames)
 }
 
-// Función para deshabilitar todas las tareas
+// Función para deshabilitar todas las tareas activas
 void disableAllTasks() {
+  // Deshabilitar cada tarea individualmente
   tRainbow.disable();
   tColorWipe.disable();
   tMeteor.disable();
@@ -160,117 +169,117 @@ void disableAllTasks() {
   tDirectionRight.disable();
   tStop.disable();
   
-  // Limpiar LEDs
+  // Apagar todos los LEDs
   FastLED.clear();
 }
 
-// Función para cambiar al efecto de reversa (B)
+// Función para activar el efecto de reversa (B)
 void switchToReverseEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Activar modo reversa
+  // Activar bandera de modo reversa
   inReverseMode = true;
   
-  // Habilitar tarea de reversa
+  // Habilitar la tarea específica
   scheduler.addTask(tReverse);
   tReverse.enable();
   
   Serial.println("Efecto: Reversa (blanco)");
 }
 
-// Función para cambiar al efecto intermitente (I)
+// Función para activar el efecto intermitente (I)
 void switchToBlinkEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Activar modo intermitente
+  // Activar bandera de modo intermitente
   inBlinkMode = true;
   
-  // Habilitar tarea de parpadeo
+  // Habilitar la tarea específica
   scheduler.addTask(tBlink);
   tBlink.enable();
   
   Serial.println("Efecto: Intermitente (ámbar)");
 }
 
-// Función para cambiar al efecto direccional izquierda (L)
+// Función para activar el efecto direccional izquierda (L)
 void switchToDirectionLeftEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Activar modo izquierda
+  // Activar bandera de modo izquierda
   inLeftMode = true;
-  leftPosition = NUM_LEDS - 1;
+  leftPosition = NUM_LEDS - 1;  // Reiniciar posición desde el final
   
-  // Habilitar tarea de dirección izquierda
+  // Habilitar la tarea específica
   scheduler.addTask(tDirectionLeft);
   tDirectionLeft.enable();
   
   Serial.println("Efecto: Dirección izquierda");
 }
 
-// Función para cambiar al efecto direccional derecha (R)
+// Función para activar el efecto direccional derecha (R)
 void switchToDirectionRightEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Activar modo derecha
+  // Activar bandera de modo derecha
   inRightMode = true;
-  rightPosition = 0;
+  rightPosition = 0;       // Reiniciar posición desde el inicio
   
-  // Habilitar tarea de dirección derecha
+  // Habilitar la tarea específica
   scheduler.addTask(tDirectionRight);
   tDirectionRight.enable();
   
   Serial.println("Efecto: Dirección derecha");
 }
 
-// Función para cambiar al efecto de alto (S)
+// Función para activar el efecto de alto (S)
 void switchToStopEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Activar modo alto
+  // Activar bandera de modo alto
   inStopMode = true;
   
-  // Habilitar tarea de alto
+  // Habilitar la tarea específica
   scheduler.addTask(tStop);
   tStop.enable();
   
   Serial.println("Efecto: Alto (rojo)");
 }
 
-// Función para cambiar a la siguiente animación RGB
+// Función para cambiar al siguiente efecto RGB
 void switchToNextEffect() {
-  disableAllTasks();
+  disableAllTasks();       // Primero desactivar todas las tareas
   
-  // Cambiar a la siguiente animación
+  // Calcular siguiente efecto (0-4) con módulo para ciclar
   currentEffect = (currentEffect + 1) % 5;
   
-  // Habilitar la nueva animación
+  // Activar el nuevo efecto según el índice
   switch (currentEffect) {
-    case 0:
+    case 0:  // Arcoíris
       scheduler.addTask(tRainbow);
       tRainbow.enable();
       Serial.println("Efecto: Arcoíris");
       break;
-    case 1:
+    case 1:  // Barrido de color
       scheduler.addTask(tColorWipe);
-      wipePosition = 0;
-      wipeColor = random8();
+      wipePosition = 0;                // Reiniciar posición
+      wipeColor = random8();           // Color aleatorio
       tColorWipe.enable();
       Serial.println("Efecto: Barrido de color");
       break;
-    case 2:
+    case 2:  // Meteorito
       scheduler.addTask(tMeteor);
-      meteorPosition = 0;
+      meteorPosition = 0;              // Reiniciar posición
       tMeteor.enable();
       Serial.println("Efecto: Meteorito");
       break;
-    case 3:
+    case 3:  // Respiración
       scheduler.addTask(tBreathe);
-      breatheBrightness = 0;
-      breatheIncreasing = true;
+      breatheBrightness = 0;           // Comenzar desde oscuro
+      breatheIncreasing = true;        // Iniciar aumentando brillo
       tBreathe.enable();
       Serial.println("Efecto: Respiración");
       break;
-    case 4:
+    case 4:  // Destello
       scheduler.addTask(tTwinkle);
       tTwinkle.enable();
       Serial.println("Efecto: Destello");
@@ -278,45 +287,45 @@ void switchToNextEffect() {
   }
 }
 
-// Efecto de arcoíris
+// Implementación del efecto arcoíris
 void rainbowTask() {
-  static int counter = 0;
+  static int counter = 0;    // Contador para duración del efecto
   
-  // Crear efecto arcoíris
-  fill_rainbow(leds, NUM_LEDS, gHue, 7);
+  // Crear efecto arcoíris en toda la tira
+  fill_rainbow(leds, NUM_LEDS, gHue, 7);  // 7 es el desplazamiento de color entre LEDs
   
-  // Actualizar color base
-  EVERY_N_MILLISECONDS(20) { 
-    gHue++; 
+  // Actualizar color base periódicamente
+  EVERY_N_MILLISECONDS(20) {  // Cada 20ms (50Hz)
+    gHue++;  // Incrementar tono base (0-255, vuelve a 0 automáticamente)
   }
   
-  // Cambiar a la siguiente animación después de un tiempo
+  // Contar para cambiar a la siguiente animación después de tiempo
   counter++;
-  if (counter >= 250) {  // ~5 segundos
+  if (counter >= 250) {  // ~5 segundos (250 * 8.33ms = ~2080ms)
     counter = 0;
-    switchToNextEffect();
+    switchToNextEffect();  // Cambiar al siguiente efecto
   }
 }
 
-// Efecto de barrido de color
+// Implementación del efecto barrido de color
 void colorWipeTask() {
-  static int counter = 0;
+  static int counter = 0;    // Contador para duración y ralentización
   
-  // Realizar el barrido de color
-  if (counter % 5 == 0) {  // Ralentizar el efecto
-    leds[wipePosition] = CHSV(wipeColor, 255, 255);
+  // Realizar el barrido de color (más lento)
+  if (counter % 5 == 0) {    // Cada 5 ciclos para ralentizar
+    leds[wipePosition] = CHSV(wipeColor, 255, 255);  // Asignar color HSV al LED actual
     
-    wipePosition++;
-    if (wipePosition >= NUM_LEDS) {
-      wipePosition = 0;
-      wipeColor += 30;  // Cambiar color para el siguiente barrido
+    wipePosition++;          // Avanzar al siguiente LED
+    if (wipePosition >= NUM_LEDS) {  // Al llegar al final
+      wipePosition = 0;      // Volver al inicio
+      wipeColor += 30;       // Cambiar color para el siguiente barrido
     }
   }
   
-  // Desvanecer el resto de los LEDs lentamente
-  fadeToBlackBy(leds, NUM_LEDS, 10);
+  // Desvanecer gradualmente el resto de LEDs
+  fadeToBlackBy(leds, NUM_LEDS, 10);  // Reducir brillo un 10% por ciclo
   
-  // Cambiar a la siguiente animación después de un tiempo
+  // Contar para cambiar a la siguiente animación después de tiempo
   counter++;
   if (counter >= 250) {  // ~5 segundos
     counter = 0;
@@ -324,31 +333,33 @@ void colorWipeTask() {
   }
 }
 
-// Efecto de meteorito
+// Implementación del efecto meteorito
 void meteorTask() {
-  static int counter = 0;
+  static int counter = 0;    // Contador para duración y ralentización
   
-  // Desvanecer todos los LEDs
-  fadeToBlackBy(leds, NUM_LEDS, 64);
+  // Desvanecer todos los LEDs para crear estela
+  fadeToBlackBy(leds, NUM_LEDS, 64);  // Reducir brillo un 25% por ciclo
   
-  // Dibujar meteorito
-  int meteorSize = 3;
+  // Dibujar meteorito con cola degradada
+  int meteorSize = 3;        // Tamaño del meteorito (3 LEDs)
   for (int i = 0; i < meteorSize; i++) {
+    // Verificar que la posición esté dentro del rango válido
     if ((meteorPosition - i < NUM_LEDS) && (meteorPosition - i >= 0)) {
+      // Color más brillante al frente, más tenue en la cola
       leds[meteorPosition - i] = CHSV(gHue, 255, 255 - (i * 50));
     }
   }
   
-  // Actualizar posición
-  if (counter % 3 == 0) {  // Ralentizar el movimiento
-    meteorPosition++;
-    if (meteorPosition > NUM_LEDS + meteorSize) {
-      meteorPosition = 0;
-      gHue += 32;  // Cambiar color del próximo meteorito
+  // Actualizar posición (más lento)
+  if (counter % 3 == 0) {    // Cada 3 ciclos para ralentizar
+    meteorPosition++;        // Avanzar meteorito
+    if (meteorPosition > NUM_LEDS + meteorSize) {  // Cuando sale completamente
+      meteorPosition = 0;    // Reiniciar desde el inicio
+      gHue += 32;            // Cambiar color del siguiente meteorito
     }
   }
   
-  // Cambiar a la siguiente animación después de un tiempo
+  // Contar para cambiar a la siguiente animación después de tiempo
   counter++;
   if (counter >= 250) {  // ~5 segundos
     counter = 0;
@@ -356,31 +367,30 @@ void meteorTask() {
   }
 }
 
-// Efecto de respiración
+// Implementación del efecto respiración
 void breatheTask() {
-  static int counter = 0;
+  static int counter = 0;    // Contador para duración y ralentización
   
-  // Efecto de respiración aplicando brillo pulsante
-  if (counter % 2 == 0) {  // Ralentizar el efecto
+  // Efecto de respiración (fade in/out)
+  if (counter % 2 == 0) {    // Cada 2 ciclos para ralentizar
     if (breatheIncreasing) {
-      breatheBrightness += 1;
-      if (breatheBrightness >= 250) {
-        breatheIncreasing = false;
+      breatheBrightness += 1;  // Aumentar brillo
+      if (breatheBrightness >= 250) {  // Al llegar al máximo
+        breatheIncreasing = false;     // Comenzar a disminuir
       }
     } else {
-      breatheBrightness -= 1;
-      if (breatheBrightness <= 10) {
-        breatheIncreasing = true;
-        // Cambiar color cuando llega al mínimo
-        gHue += 15;
+      breatheBrightness -= 1;  // Disminuir brillo
+      if (breatheBrightness <= 10) {   // Al llegar al mínimo
+        breatheIncreasing = true;      // Comenzar a aumentar
+        gHue += 15;                    // Cambiar color cuando está oscuro
       }
     }
   }
   
-  // Aplicar color y brillo a todos los LEDs
+  // Aplicar mismo color y brillo a toda la tira
   fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, breatheBrightness));
   
-  // Cambiar a la siguiente animación después de un tiempo
+  // Contar para cambiar a la siguiente animación después de tiempo
   counter++;
   if (counter >= 250) {  // ~5 segundos
     counter = 0;
@@ -388,25 +398,25 @@ void breatheTask() {
   }
 }
 
-// Efecto de destello
+// Implementación del efecto destello
 void twinkleTask() {
-  static int counter = 0;
+  static int counter = 0;    // Contador para duración
   
   // Desvanecer todos los LEDs gradualmente
-  fadeToBlackBy(leds, NUM_LEDS, 10);
+  fadeToBlackBy(leds, NUM_LEDS, 10);  // Reducir brillo un 10% por ciclo
   
   // Añadir destellos aleatorios
-  if (random8() < 50) {  // Probabilidad de destello
-    int pos = random16(NUM_LEDS);
-    leds[pos] += CHSV(gHue + random8(64), 200, 255);
+  if (random8() < 50) {  // ~20% de probabilidad por ciclo
+    int pos = random16(NUM_LEDS);          // Posición aleatoria
+    leds[pos] += CHSV(gHue + random8(64), 200, 255);  // Añadir color brillante
   }
   
-  // Cambio gradual del tono base
-  EVERY_N_MILLISECONDS(30) {
-    gHue++;
+  // Cambiar gradualmente el tono base
+  EVERY_N_MILLISECONDS(30) {  // Cada 30ms
+    gHue++;  // Rotar los colores base
   }
   
-  // Cambiar a la siguiente animación después de un tiempo
+  // Contar para cambiar a la siguiente animación después de tiempo
   counter++;
   if (counter >= 250) {  // ~5 segundos
     counter = 0;
@@ -414,19 +424,19 @@ void twinkleTask() {
   }
 }
 
-// Efecto de parpadeo intermitente (I - ámbar)
+// Implementación del efecto intermitente ámbar (I)
 void blinkTask() {
-  static bool blinkState = false;
+  static bool blinkState = false;  // Estado actual (encendido/apagado)
   
-  // Invertir el estado (encendido/apagado)
+  // Invertir el estado en cada llamada (encendido->apagado o apagado->encendido)
   blinkState = !blinkState;
   
-  if (blinkState) {
-    // Encender primeros y últimos 15 LEDs (o menos si la tira es más corta) en ámbar
-    int halfCount = min(15, NUM_LEDS / 2);
+  if (blinkState) {  // Si está en estado encendido
+    // Encender los primeros y últimos LEDs en ámbar
+    int halfCount = min(15, NUM_LEDS / 2);  // Máximo 15 LEDs o la mitad si es menor
     
-    // Color ámbar (mezcla de rojo y verde)
-    CRGB amberColor = CRGB(255, 191, 0);
+    // Definir color ámbar (mezcla de rojo y verde)
+    CRGB amberColor = CRGB(255, 191, 0);  // Valores RGB para ámbar
     
     // Encender los primeros LEDs
     for (int i = 0; i < halfCount; i++) {
@@ -437,85 +447,85 @@ void blinkTask() {
     for (int i = max(halfCount, NUM_LEDS - halfCount); i < NUM_LEDS; i++) {
       leds[i] = amberColor;
     }
-  } else {
+  } else {  // Si está en estado apagado
     // Apagar todos los LEDs
     FastLED.clear();
   }
 }
 
-// Efecto de reversa (B - blanco)
+// Implementación del efecto reversa blanco (B)
 void reverseTask() {
-  static bool reverseState = false;
+  static bool reverseState = false;  // Estado actual (encendido/apagado)
   
-  // Invertir el estado (encendido/apagado)
+  // Invertir el estado en cada llamada
   reverseState = !reverseState;
   
-  if (reverseState) {
-    // Encender primeros y últimos 15 LEDs (o menos si la tira es más corta) en blanco
-    int halfCount = min(15, NUM_LEDS / 2);
+  if (reverseState) {  // Si está en estado encendido
+    // Encender los primeros y últimos LEDs en blanco
+    int halfCount = min(15, NUM_LEDS / 2);  // Máximo 15 LEDs o la mitad si es menor
     
     // Encender los primeros LEDs
     for (int i = 0; i < halfCount; i++) {
-      leds[i] = CRGB::White;
+      leds[i] = CRGB::White;  // Color blanco predefinido
     }
     
     // Encender los últimos LEDs
     for (int i = max(halfCount, NUM_LEDS - halfCount); i < NUM_LEDS; i++) {
-      leds[i] = CRGB::White;
+      leds[i] = CRGB::White;  // Color blanco predefinido
     }
-  } else {
+  } else {  // Si está en estado apagado
     // Apagar todos los LEDs
     FastLED.clear();
   }
 }
 
-// Efecto de dirección izquierda (L)
+// Implementación del efecto dirección izquierda (L)
 void directionLeftTask() {
-  // Limpiar todos los LEDs
+  // Limpiar todos los LEDs para efecto más claro
   FastLED.clear();
   
-  // Dibujar los dos LEDs de la animación
-  leds[leftPosition % NUM_LEDS] = CRGB::Green;
-  leds[(leftPosition - 1 + NUM_LEDS) % NUM_LEDS] = CRGB::Blue;
+  // Dibujar dos LEDs desplazándose (verde y azul)
+  leds[leftPosition % NUM_LEDS] = CRGB::Green;            // LED principal verde
+  leds[(leftPosition - 1 + NUM_LEDS) % NUM_LEDS] = CRGB::Blue;  // LED secundario azul
   
-  // Retroceder la posición (hacia la izquierda)
+  // Actualizar posición (hacia la izquierda con wrap-around)
   leftPosition = (leftPosition - 1 + NUM_LEDS) % NUM_LEDS;
   
-  // Pequeño retardo para que el movimiento no sea demasiado rápido
-  delay(50);
+  // Añadir pequeño retardo para suavizar la animación
+  delay(50);  // 50ms adicionales (más lento que los 8.33ms del bucle principal)
 }
 
-// Efecto de dirección derecha (R)
+// Implementación del efecto dirección derecha (R)
 void directionRightTask() {
-  // Limpiar todos los LEDs
+  // Limpiar todos los LEDs para efecto más claro
   FastLED.clear();
   
-  // Dibujar los dos LEDs de la animación
-  leds[rightPosition % NUM_LEDS] = CRGB::Red;
-  leds[(rightPosition + 1) % NUM_LEDS] = CRGB::Blue;
+  // Dibujar dos LEDs desplazándose (rojo y azul)
+  leds[rightPosition % NUM_LEDS] = CRGB::Red;         // LED principal rojo
+  leds[(rightPosition + 1) % NUM_LEDS] = CRGB::Blue;  // LED secundario azul
   
-  // Avanzar la posición (hacia la derecha)
+  // Actualizar posición (hacia la derecha con wrap-around)
   rightPosition = (rightPosition + 1) % NUM_LEDS;
   
-  // Pequeño retardo para que el movimiento no sea demasiado rápido
-  delay(50);
+  // Añadir pequeño retardo para suavizar la animación
+  delay(50);  // 50ms adicionales
 }
 
-// Efecto de alto (S - rojo fijo)
+// Implementación del efecto alto rojo (S)
 void stopTask() {
-  // Encender primeros y últimos 15 LEDs en rojo
-  int halfCount = min(15, NUM_LEDS / 2);
+  // Encender los primeros y últimos LEDs en rojo fijo
+  int halfCount = min(15, NUM_LEDS / 2);  // Máximo 15 LEDs o la mitad si es menor
   
-  // Limpiar LEDs primero
+  // Limpiar LEDs primero para asegurarse de estado correcto
   FastLED.clear();
   
-  // Encender los primeros LEDs
+  // Encender los primeros LEDs en rojo
   for (int i = 0; i < halfCount; i++) {
-    leds[i] = CRGB::Red;
+    leds[i] = CRGB::Red;  // Color rojo predefinido
   }
   
-  // Encender los últimos LEDs
+  // Encender los últimos LEDs en rojo
   for (int i = max(halfCount, NUM_LEDS - halfCount); i < NUM_LEDS; i++) {
-    leds[i] = CRGB::Red;
+    leds[i] = CRGB::Red;  // Color rojo predefinido
   }
 }
